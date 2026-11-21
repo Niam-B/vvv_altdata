@@ -1,0 +1,14 @@
+# secrets
+.env
+.env.*
+
+# raw HTML snapshots and local SQLite (never committed)
+data/raw/
+data/db/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/

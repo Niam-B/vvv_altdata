@@ -1,0 +1,33 @@
+name: collect
+on:
+  schedule:
+    - cron: "*/30 12-23,0-2 * * *"
+    - cron: "15 14 * * *"
+  workflow_dispatch:
+concurrency: collect
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt && python -m playwright install --with-deps chromium
+      - run: |
+          if [ ! -f data/ref/cities.csv ]; then echo "run master-crawl first"; exit 0; fi
+          if [ "${{ github.event.schedule }}" = "15 14 * * *" ]; then
+            python collectors/coupons_daily.py
+            python collectors/jobs_daily.py
+          else
+            python collectors/wait_times.py
+          fi
+      - run: |
+          git config user.name "collector-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/live
+          git commit -m "data $(date -u +%FT%H%MZ)" || echo "no new data"
+          git pull --rebase && git push
