@@ -1,0 +1,49 @@
+name: collect-loop
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "40 11 * * *"   # 6:40 am ET
+    - cron: "40 17 * * *"   # 12:40 pm ET
+    - cron: "40 23 * * *"   # 6:40 pm ET
+concurrency:
+  group: collect-loop
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt && python -m playwright install --with-deps chromium
+      - name: loop
+        run: |
+          git config user.name "collector-bot"
+          git config user.email "actions@users.noreply.github.com"
+          if [ ! -f data/ref/cities.csv ]; then echo "missing data/ref/cities.csv"; exit 1; fi
+          start=$(date +%s)
+          commit() {
+            git add data/live
+            git commit -qm "data $(date -u +%FT%H%MZ)" || true
+            git pull -q --rebase && git push -q || echo "push failed; will retry next pass"
+          }
+          today=$(date -u +%F)
+          if [ ! -f "data/live/coupons/$today.csv" ]; then
+            python collectors/coupons_daily.py || true
+            python collectors/jobs_daily.py || true
+            commit
+          fi
+          while true; do
+            h=$(date -u +%H)
+            if [ "$h" -ge 3 ] && [ "$h" -lt 11 ]; then echo "outside store hours"; break; fi
+            t0=$(date +%s)
+            python collectors/wait_times.py || true
+            commit
+            if [ $(( $(date +%s) - start )) -gt 19800 ]; then echo "time limit reached"; break; fi
+            sl=$(( 1800 - ($(date +%s) - t0) ))
+            if [ $sl -gt 0 ]; then sleep $sl; fi
+          done
