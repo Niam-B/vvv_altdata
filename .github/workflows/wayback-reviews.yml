@@ -1,0 +1,27 @@
+name: wayback-reviews
+# Historical Google review counts from free Wayback Machine snapshots + review panel.
+# Resumable: re-run until the log shows "remaining: 0".
+on: workflow_dispatch
+concurrency: wayback-reviews
+jobs:
+  wayback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python scripts/fetch_acs_income.py || echo "ACS income fetch failed; continuing"
+      - run: python collectors/wayback_reviews.py
+      - run: python analysis/review_panel.py
+      - if: always()
+        run: |
+          git config user.name "collector-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/hist data/ref
+          git commit -m "wayback reviews $(date -u +%FT%H%MZ)" || echo "no changes"
+          git pull --rebase && git push

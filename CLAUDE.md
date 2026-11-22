@@ -14,8 +14,11 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
     meta tags, Google Place ID inside the review link.
 - **jobs.vioc.com/service-center-jobs**: "Showing 1-20 of N jobs", 20 per page at
   `/service-center-jobs/page/{n}`; some listings tagged VIOCF.
-- **Breeze / Oil Changers** stores were acquired Dec 1 2025 — TODO: flag them in stores.csv
-  (not done yet) so comps can be computed ex-acquisition.
+- **Breeze / Oil Changers** stores were acquired Dec 1 2025. `analysis/review_panel.py` flags
+  them (name match, optional manual list `data/ref/breeze_stores.csv`, or first Wayback capture
+  2025-12-01..2026-02-28) and excludes them from same-store comps.
+- **Review history (free only — no Apify or paid scrapers):** Wayback Machine CDX + archived
+  store pages; Census ACS 5-yr median household income by ZIP (no key).
 
 ## Layout
 - `collectors/http.py` – shared fetcher (~1 req/s + jitter, tenacity backoff, browser UA,
@@ -30,7 +33,16 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
 - `collectors/coupons_daily.py` → `data/live/coupons/YYYY-MM-DD.csv` (daily 14:15 UTC,
   fixed 400-store sample `data/ref/coupon_sample.csv`).
 - `collectors/jobs_daily.py` → `data/live/jobs/YYYY-MM-DD.csv` (daily 14:15 UTC).
+- `collectors/wayback_reviews.py` → `data/hist/wayback_cdx.csv`, `data/hist/wayback_snapshots.csv`
+  (one archived snapshot per store-quarter from 2019Q1 for the coupon sample; resumable).
+- `scripts/fetch_acs_income.py` → `data/ref/zcta_income.csv`.
+- `analysis/review_panel.py` → `data/hist/review_panel_quarterly.csv` (store-quarter panel:
+  new reviews scaled to 91 days, usable if 45–183 day gap and count not falling) and
+  `data/hist/review_yoy_summary.csv` (same-store YoY overall / income tercile / age bucket;
+  age = first Wayback capture, a proxy). Calendar quarters + VVV fiscal quarter labels.
 - `scripts/load_sqlite.py` → `data/db/vvv.sqlite` (local analysis only; rebuilt from CSVs).
+- Workflows: `master-crawl` (manual), `collect` (scheduled), `wayback-reviews` (manual,
+  re-run until "remaining: 0").
 
 ## Rules
 - Collectors run on GitHub Actions (no persistent disk): **append-only daily CSVs** in
@@ -38,7 +50,8 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
 - Samples (`wait_sample.csv`, `coupon_sample.csv`) are fixed once created — don't regenerate
   them or the panel breaks. Delete deliberately only if the store universe changes a lot.
 - Never commit `.env`, raw HTML (`data/raw/`), or `data/db/`.
-- Keep request rate ~1/sec.
+- Keep request rate ~1/sec (Wayback: 1.5 s).
+- Free data sources only; no API secrets in workflows.
 
 ## Commands
 ```bash
@@ -47,6 +60,8 @@ STATES=ky SAVE_RAW=1 python collectors/vioc_master.py   # small test crawl
 python collectors/wait_times.py
 python collectors/coupons_daily.py
 python collectors/jobs_daily.py
+python collectors/wayback_reviews.py
+python analysis/review_panel.py
 python scripts/load_sqlite.py
 python -m unittest discover tests
 ```
