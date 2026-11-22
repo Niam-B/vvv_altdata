@@ -40,9 +40,13 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
   new reviews scaled to 91 days, usable if 45–183 day gap and count not falling) and
   `data/hist/review_yoy_summary.csv` (same-store YoY overall / income tercile / age bucket;
   age = first Wayback capture, a proxy). Calendar quarters + VVV fiscal quarter labels.
+- `collectors/take5_master.py` (+ `collectors/parse_take5.py`) → `data/ref/take5_stores.csv`
+  (one-off Take 5 crawl from www.take5.com/sitemap.xml; resumable, FRESH=1 restarts).
+- `analysis/competition.py` → `data/derived/vvv_competition.csv` (per Valvoline store: Take 5
+  within 1/3/5 mi, nearest Take 5, other Valvoline within 3 mi, ZIP income). Exit 1 on missing inputs.
 - `scripts/load_sqlite.py` → `data/db/vvv.sqlite` (local analysis only; rebuilt from CSVs).
 - Workflows: `master-crawl` (manual), `collect` (scheduled), `wayback-reviews` (manual,
-  re-run until "remaining: 0").
+  re-run until "remaining: 0"), `take5-crawl` (manual, one-off), `collect-loop` (scheduled).
 
 ## Rules
 - Collectors run on GitHub Actions (no persistent disk): **append-only daily CSVs** in
@@ -62,6 +66,7 @@ python collectors/coupons_daily.py
 python collectors/jobs_daily.py
 python collectors/wayback_reviews.py
 python analysis/review_panel.py
+python collectors/take5_master.py && python analysis/competition.py
 python scripts/load_sqlite.py
 python -m unittest discover tests
 ```

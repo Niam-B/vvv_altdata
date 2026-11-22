@@ -143,6 +143,19 @@ class Fetcher:
             self._save_raw(url, html)
         return html
 
+    def get_bytes(self, url: str) -> Optional[bytes]:
+        """Raw response body (e.g. gzipped sitemaps); None on 4xx or exhausted retries."""
+        try:
+            r = self._get(url)
+        except Exception as e:
+            self.stats["errors"] += 1
+            log.warning("GET failed %s: %s", url, e)
+            return None
+        if r.status_code >= 400:
+            log.warning("HTTP %s %s", r.status_code, url)
+            return None
+        return r.content
+
     def _save_raw(self, url: str, html: str) -> None:
         name = url.split("://", 1)[-1].strip("/").replace("/", "__") or "index"
         path = RAW_DIR / f"{name[:180]}.html"

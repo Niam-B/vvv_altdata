@@ -23,11 +23,13 @@ def main() -> int:
     for y in YEARS:
         url = (f"https://api.census.gov/data/{y}/acs/acs5?get=B19013_001E"
                f"&for=zip%20code%20tabulation%20area:*")
+        body = b""
         try:
             with urlopen(Request(url, headers={"User-Agent": "vvv-altdata research"}), timeout=120) as r:
-                rows = json.load(r)
+                body = r.read()
+            rows = json.loads(body)
         except Exception as e:  # try an older vintage
-            print(f"ACS {y} failed: {e}")
+            print(f"ACS {y} failed: {e}; response starts: {body[:300]!r}")
             continue
         hdr = rows[0]
         i_inc, i_z = hdr.index("B19013_001E"), hdr.index("zip code tabulation area")

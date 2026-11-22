@@ -1,0 +1,29 @@
+name: take5-crawl
+# One-off Take 5 store crawl + Valvoline competitor-density analysis.
+# Resumable: if the crawl hits its time budget, re-run to finish.
+on: workflow_dispatch
+concurrency: take5-crawl
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: |
+          for f in data/ref/stores.csv; do
+            if [ ! -f "$f" ]; then echo "missing $f — run master-crawl first"; exit 1; fi
+          done
+      - run: python collectors/take5_master.py
+      - run: python analysis/competition.py
+      - run: |
+          git config user.name "collector-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/ref/take5_stores.csv data/derived/
+          git commit -m "take5 crawl $(date -u +%F)" || echo "no changes"
+          git pull --rebase && git push
