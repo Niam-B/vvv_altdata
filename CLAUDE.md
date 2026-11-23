@@ -41,6 +41,8 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
   `data/hist/review_yoy_summary.csv` (same-store YoY overall / income tercile / age bucket;
   age = first Wayback capture, a proxy). Calendar quarters + VVV fiscal quarter labels.
 - `collectors/take5_master.py` (+ `collectors/parse_take5.py`) → `data/ref/take5_stores.csv`
+  (store URLs /locations/{state-slug}/{city}/{digits}/; `state` = slug, `state_abbr` = 2-letter;
+  city-page fallback if the sitemap gives < 1,000 stores)
   (one-off Take 5 crawl from www.take5.com/sitemap.xml; resumable, FRESH=1 restarts).
 - `analysis/competition.py` → `data/derived/vvv_competition.csv` (per Valvoline store: Take 5
   within 1/3/5 mi, nearest Take 5, other Valvoline within 3 mi, ZIP income). Exit 1 on missing inputs.

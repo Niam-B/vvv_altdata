@@ -12,13 +12,29 @@ from __future__ import annotations
 import gzip
 import re
 from typing import Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
 from collectors.parse import _clean, _jsonld_objects, _to_float, _to_int
 
-STORE_PATH_RE = re.compile(r"^/locations/([a-z]{2})/([^/]+)/(\d+)/?$", re.I)
+STORE_PATH_RE = re.compile(r"^/locations/([a-z-]+)/([^/]+)/(\d+)/?$", re.I)
+CITY_PATH_RE = re.compile(r"^/locations/([a-z-]+)/([^/]+)/?$", re.I)
+
+STATE_ABBR = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
+    "colorado": "CO", "connecticut": "CT", "delaware": "DE", "district-of-columbia": "DC",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL",
+    "indiana": "IN", "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA",
+    "maine": "ME", "maryland": "MD", "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",
+    "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new-hampshire": "NH", "new-jersey": "NJ", "new-mexico": "NM", "new-york": "NY",
+    "north-carolina": "NC", "north-dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR",
+    "pennsylvania": "PA", "rhode-island": "RI", "south-carolina": "SC", "south-dakota": "SD",
+    "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA",
+    "washington": "WA", "west-virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+}
+STATE_ABBR["washington-dc"] = "DC"
 LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
 LATLON = r"(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)"
 DEST_RE = re.compile(r"destination=" + LATLON)
@@ -40,9 +56,32 @@ def sitemap_locs(body: bytes) -> tuple[list[str], bool]:
 
 
 def store_key(url: str) -> Optional[tuple[str, str, str]]:
-    """(state, city, store_number) if url is a store page, else None."""
+    """(state_slug, city_slug, store_number) if url is a store page, else None."""
     m = STORE_PATH_RE.match(urlparse(url).path)
-    return (m.group(1).upper(), m.group(2), m.group(3)) if m else None
+    return (m.group(1).lower(), m.group(2), m.group(3)) if m else None
+
+
+def state_abbr(slug: str) -> str:
+    """'new-york' -> 'NY'; a 2-letter slug is returned upper-cased; unknown -> ''."""
+    slug = (slug or "").lower()
+    if slug in STATE_ABBR:
+        return STATE_ABBR[slug]
+    return slug.upper() if len(slug) == 2 and slug.upper() in STATE_ABBR.values() else ""
+
+
+def is_city_page(url: str) -> bool:
+    return bool(CITY_PATH_RE.match(urlparse(url).path))
+
+
+def city_page_store_links(html: str, base: str) -> list[str]:
+    """Store-page URLs linked from a Take 5 city page (fallback discovery)."""
+    soup = BeautifulSoup(html, "lxml")
+    out = set()
+    for a in soup.find_all("a", href=True):
+        u = urljoin(base, a["href"]).split("#")[0].split("?")[0]
+        if urlparse(u).netloc.lower().endswith("take5.com") and store_key(u):
+            out.add(norm_store_url(u))
+    return sorted(out)
 
 
 def norm_store_url(url: str) -> str:
@@ -94,7 +133,8 @@ def _offers(soup: BeautifulSoup) -> str:
 def parse_take5_store(html: str, url: str) -> dict:
     soup = BeautifulSoup(html, "lxml")
     st, city, num = store_key(url) or ("", "", "")
-    rec = {"store_url": norm_store_url(url), "store_number": num, "state": st, "city": city,
+    rec = {"store_url": norm_store_url(url), "store_number": num, "state": st,
+           "state_abbr": state_abbr(st), "city": city,
            "street": "", "zip": "", "phone": "", "lat": None, "lon": None,
            "google_rating": None, "review_count": None, "hours_text": "", "coupon_text": ""}
 

@@ -1,7 +1,9 @@
 """One-off Take 5 Oil Change store crawl (competitor universe).
 
 1. www.take5.com/sitemap.xml (follows sitemap indexes, .xml.gz ok) -> store URLs matching
-   /locations/{state}/{city}/{digits}/
+   /locations/{state-slug}/{city}/{digits}/ (e.g. /locations/new-york/albany/30123/).
+   If that yields < 1,000 stores, every city page /locations/{state}/{city}/ in the sitemap
+   is also fetched and its store links collected (de-duplicated).
 2. Each store page (~1 req/s + jitter, retries) -> data/ref/take5_stores.csv
 
 Resumable: rows are appended to data/ref/take5_stores.csv as they are fetched; stores
@@ -25,20 +27,45 @@ from collections import Counter
 from collectors.common import REF, append_rows, read_csv, setup_logging, ts_utc, write_csv
 from collectors.http import Fetcher
 from collectors.parse_take5 import (
-    norm_store_url, parse_take5_store, sitemap_locs, store_key, take5_has_data,
+    city_page_store_links, is_city_page, norm_store_url, parse_take5_store, sitemap_locs, store_key,
+    take5_has_data,
 )
 
 log = logging.getLogger("take5")
 
 SITEMAP = "https://www.take5.com/sitemap.xml"
 OUT = REF / "take5_stores.csv"
-FIELDS = ["store_url", "store_number", "state", "city", "street", "zip", "phone", "lat", "lon",
+FIELDS = ["store_url", "store_number", "state", "state_abbr", "city", "street", "zip", "phone", "lat", "lon",
           "google_rating", "review_count", "hours_text", "coupon_text", "crawl_ts"]
 MAX_SITEMAPS = 200
+MIN_SITEMAP_STORES = 1000  # below this, also crawl city pages for store links
 
 
 def discover(f: Fetcher) -> list[str]:
-    queue, seen, stores = [SITEMAP], set(), set()
+    stores, cities = discover_sitemap(f)
+    if len(stores) < MIN_SITEMAP_STORES and cities:
+        log.info("sitemap gave %d store URLs (< %d); crawling %d city pages for store links",
+                 len(stores), MIN_SITEMAP_STORES, len(cities))
+        before = len(stores)
+        stores |= set(discover_city_pages(f, cities))
+        log.info("city-page fallback added %d store URLs (total %d)", len(stores) - before, len(stores))
+    return sorted(stores)
+
+
+def discover_city_pages(f: Fetcher, cities: list[str]) -> list[str]:
+    found: set = set()
+    for i, cu in enumerate(cities, 1):
+        html = f.get(cu)
+        if html:
+            found.update(city_page_store_links(html, cu))
+        if i % 100 == 0:
+            log.info("city pages %d/%d, store URLs found %d", i, len(cities), len(found))
+    return sorted(found)
+
+
+def discover_sitemap(f: Fetcher) -> tuple[set, list[str]]:
+    """(store URLs, city-page URLs) from the sitemap (follows sitemap indexes)."""
+    queue, seen, stores, cities = [SITEMAP], set(), set(), set()
     while queue and len(seen) < MAX_SITEMAPS:
         sm = queue.pop(0)
         if sm in seen:
@@ -54,8 +81,11 @@ def discover(f: Fetcher) -> list[str]:
                 queue.append(u)
             elif store_key(u):
                 stores.add(norm_store_url(u))
-        log.info("sitemap %s: %d locs (index=%s), store URLs so far %d", sm, len(locs), is_index, len(stores))
-    return sorted(stores)
+            elif is_city_page(u):
+                cities.add(norm_store_url(u))
+        log.info("sitemap %s: %d locs (index=%s), store URLs %d, city pages %d",
+                 sm, len(locs), is_index, len(stores), len(cities))
+    return stores, sorted(cities)
 
 
 def main() -> int:
@@ -65,9 +95,9 @@ def main() -> int:
     f = Fetcher(use_playwright=False)
 
     urls = discover(f)
-    print(f"store URLs in sitemap: {len(urls)}")
+    print(f"store URLs discovered: {len(urls)}")
     if not urls:
-        log.error("no /locations/{state}/{city}/{digits}/ URLs found in %s", SITEMAP)
+        log.error("no /locations/{state}/{city}/{digits}/ URLs found via %s or city pages", SITEMAP)
         return 1
 
     if os.environ.get("FRESH") == "1" and OUT.exists():
@@ -106,8 +136,9 @@ def main() -> int:
     n = len(rows)
     pct = lambda k: 100 * sum(1 for r in rows if r[k] not in ("", None)) / n if n else 0.0  # noqa: E731
     print("\n=== take5 crawl summary ===")
-    print(f"stores in sitemap: {len(urls)}  rows in take5_stores.csv: {n}  states: "
-          f"{len({r['state'] for r in rows})}")
+    print(f"stores discovered: {len(urls)}  rows in take5_stores.csv: {n}  states: "
+          f"{len({r['state'] for r in rows})}  unmapped state slugs: "
+          f"{sorted({r['state'] for r in rows if not r.get('state_abbr')})}")
     print(f"with lat/lon: {pct('lat'):.1f}%  with rating: {pct('google_rating'):.1f}%  "
           f"with street: {pct('street'):.1f}%  with coupon text: {pct('coupon_text'):.1f}%")
     print(f"this run: {dict(st)}  errors: {st['fetch_error']}  requests: {f.stats}  "
