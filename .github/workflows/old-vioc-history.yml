@@ -1,7 +1,12 @@
 name: old-vioc-history
 # First-seen dates and review_count history of current stores under their pre-late-2025
 # store.vioc.com URLs (Wayback). Resumable: re-run until phase 4 shows remaining 0.
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      max_minutes:
+        description: "stop collecting after N minutes (results are committed at the end)"
+        default: "320"
 concurrency: old-vioc-history
 jobs:
   history:
@@ -16,6 +21,8 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
       - run: python collectors/old_vioc_history.py
+        env:
+          OLD_HISTORY_MAX_MINUTES: ${{ inputs.max_minutes || '320' }}
       - run: python analysis/review_panel.py
       - if: always()
         run: |
