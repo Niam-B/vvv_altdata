@@ -1,0 +1,23 @@
+name: old-url-probe
+# Lists archived pre-2025-10 VIOC URLs per host from the Wayback CDX index to find the old
+# store-page URL pattern -> data/hist/old_url_candidates.csv
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python scripts/probe_old_vioc_urls.py
+      - run: |
+          git config user.name "collector-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/hist/old_url_candidates.csv
+          git commit -m "old url probe $(date -u +%F)" || echo "no changes"
+          git pull --rebase && git push

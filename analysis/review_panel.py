@@ -6,7 +6,8 @@ Inputs
   data/live/coupons/*.csv           live daily review_count for the same sample stores
   data/ref/stores.csv               name / address (ZIP) / state
   data/ref/zcta_income.csv          ACS median household income by ZIP (optional)
-  data/ref/breeze_stores.csv        optional manual list (store_url) of Breeze/Oil Changers stores
+  data/ref/breeze_stores.csv        optional list of Breeze/Oil Changers stores (store_url and/or
+                                    place_id column), e.g. the 164 Oil Changers locations
 
 Method
   * One review_count observation per store-quarter: the latest snapshot in the quarter
@@ -21,9 +22,10 @@ Method
 Outputs
   data/hist/review_panel_quarterly.csv  store-quarter panel
   data/hist/review_yoy_summary.csv      quarter x group same-store YoY
-Breeze/Oil Changers flag: name matches breeze|oil changers, OR store_url in
-breeze_stores.csv, OR first Wayback capture between 2025-12-01 and 2026-02-28
-(stores that appeared on store.vioc.com right after the Dec 1 2025 acquisition).
+Breeze/Oil Changers flag: brand name matches breeze|oil changers, OR the store is in
+data/ref/breeze_stores.csv (by store_url or place_id). Nothing else: with neither, no store is
+flagged. (A first-Wayback-capture date rule was dropped: store.vioc.com URLs were first archived
+Oct-Dec 2025 for most stores, so it flagged ordinary Valvoline stores.)
 """
 from __future__ import annotations
 
@@ -45,7 +47,6 @@ LIVE = ROOT / "data" / "live"
 
 MIN_GAP, MAX_GAP = 45, 183
 BREEZE_RE = re.compile(r"breeze|oil changers", re.I)
-BREEZE_WINDOW = ("2025-12-01", "2026-02-28")
 AGE_BINS = [("<=2019 (established)", "0000", "2019"), ("2020-2022", "2020", "2022"),
             ("2023+ (newer)", "2023", "9999")]
 
@@ -117,7 +118,7 @@ def store_attributes(hist: Path, ref: Path) -> pd.DataFrame:
     stores = pd.DataFrame(dedupe_stores(pd.read_csv(ref / "stores.csv", dtype=str, keep_default_na=False)
                                         .to_dict("records"))[0]) if (ref / "stores.csv").exists() \
         else pd.DataFrame(columns=["store_url", "name", "address", "state"])
-    a = stores[["store_url", "name", "address", "state"]].copy()
+    a = stores[[c for c in ("store_url", "name", "address", "state", "place_id") if c in stores]].copy()
     a["zip"] = a["address"].fillna("").str.findall(r"\b(\d{5})(?:-\d{4})?\b").str[-1]
     cdx_p = hist / "wayback_cdx.csv"
     if cdx_p.exists():
@@ -130,15 +131,17 @@ def store_attributes(hist: Path, ref: Path) -> pd.DataFrame:
     else:
         a["first_capture"] = np.nan
     fc = a["first_capture"].fillna("")
-    fc_date = fc.str[:4] + "-" + fc.str[4:6] + "-" + fc.str[6:8]
     a["age_bucket"] = ""
     for label, lo, hi in AGE_BINS:
         a.loc[(fc != "") & (fc.str[:4] >= lo) & (fc.str[:4] <= hi), "age_bucket"] = label
-    manual = set()
+    a["breeze"] = a["name"].fillna("").str.contains(BREEZE_RE)
     if (ref / "breeze_stores.csv").exists():
-        manual = set(pd.read_csv(ref / "breeze_stores.csv", dtype=str)["store_url"])
-    a["breeze"] = (a["name"].fillna("").str.contains(BREEZE_RE) | a["store_url"].isin(manual)
-                   | ((fc != "") & (fc_date >= BREEZE_WINDOW[0]) & (fc_date <= BREEZE_WINDOW[1])))
+        lst = pd.read_csv(ref / "breeze_stores.csv", dtype=str)
+        al = store_aliases(ref)
+        if "store_url" in lst:
+            a["breeze"] |= a["store_url"].isin({al.get(u, u) for u in lst["store_url"].dropna()})
+        if "place_id" in lst and "place_id" in a:
+            a["breeze"] |= a["place_id"].isin(set(lst["place_id"].dropna()))
     inc_p = ref / "zcta_income.csv"
     if inc_p.exists():
         inc = pd.read_csv(inc_p, dtype={"zcta": str})

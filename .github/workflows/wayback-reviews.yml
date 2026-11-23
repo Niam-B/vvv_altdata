@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - run: python scripts/fetch_acs_income.py || echo "ACS income fetch failed; continuing"
+      - run: python scripts/fetch_acs_income.py
       - run: python collectors/wayback_reviews.py
       - run: python analysis/review_panel.py
       - if: always()

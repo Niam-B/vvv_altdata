@@ -1,0 +1,24 @@
+name: income-refresh
+# Census ACS median household income by ZIP -> data/ref/zcta_income.csv, then re-run the
+# competition analysis so data/derived/vvv_competition.csv gets median_hh_income.
+on: workflow_dispatch
+jobs:
+  income:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python scripts/fetch_acs_income.py --force
+      - run: python analysis/competition.py
+      - run: |
+          git config user.name "collector-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/ref/zcta_income.csv data/derived/
+          git commit -m "acs income + competition $(date -u +%F)" || echo "no changes"
+          git pull --rebase && git push
