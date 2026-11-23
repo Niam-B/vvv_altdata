@@ -15,10 +15,17 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
 - **jobs.vioc.com/service-center-jobs**: "Showing 1-20 of N jobs", 20 per page at
   `/service-center-jobs/page/{n}`; some listings tagged VIOCF.
 - **Breeze / Oil Changers** stores were acquired Dec 1 2025. `analysis/review_panel.py` flags
-  them (name match, optional manual list `data/ref/breeze_stores.csv`, or first Wayback capture
-  2025-12-01..2026-02-28) and excludes them from same-store comps.
+  them only by brand name (breeze|oil changers) or `data/ref/breeze_stores.csv` (store_url and/or
+  place_id; e.g. the 164 Oil Changers locations — no list committed yet, so currently none are
+  flagged: all store names are "Valvoline Instant Oil Change"). Do NOT use first-Wayback-capture
+  dates: current store.vioc.com URLs were first archived Oct–Dec 2025 for most stores.
 - **Review history (free only — no Apify or paid scrapers):** Wayback Machine CDX + archived
-  store pages; Census ACS 5-yr median household income by ZIP (no key).
+  store pages. Current store URLs only exist from ~Oct 2025; older history is under OLD
+  store.vioc.com URLs: `/{st}/{city}/{street}-{zip}-{CODE}` (2011–2019) and
+  `/{st}/{city}/oil-change-{code}.html` (2019–Sep 2025), linked by the per-store CODE.
+- **Income:** Census ACS 5-yr B19013 by ZCTA. The Census Data API now returns "Missing Key"
+  without a key, so `fetch_acs_income.py` falls back to the free table-based Summary File on
+  www2.census.gov; it exits 1 if neither works.
 
 ## Layout
 - `collectors/http.py` – shared fetcher (~1 req/s + jitter, tenacity backoff, browser UA,
@@ -43,7 +50,15 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
 - `collectors/jobs_daily.py` → `data/live/jobs/YYYY-MM-DD.csv` (daily 14:15 UTC).
 - `collectors/wayback_reviews.py` → `data/hist/wayback_cdx.csv`, `data/hist/wayback_snapshots.csv`
   (one archived snapshot per store-quarter from 2019Q1 for the coupon sample; resumable).
-- `scripts/fetch_acs_income.py` → `data/ref/zcta_income.csv`.
+- `scripts/fetch_acs_income.py` → `data/ref/zcta_income.csv` (workflow `income-refresh` also
+  re-runs competition.py).
+- `scripts/probe_old_vioc_urls.py` → `data/hist/old_url_candidates.csv` (archived pre-2025-10 URLs
+  per VIOC host; workflow `old-url-probe`).
+- `collectors/old_vioc_history.py` → `data/hist/old_url_captures.csv`, `old_store_codes.csv`
+  (code → current store), `store_first_seen.csv` (first_seen_date = earliest archived old URL, a
+  store-age proxy), `old_url_snapshots.csv` (review_count per store-quarter 2019Q1–2025Q3 for the
+  coupon sample; OLD_HISTORY_ALL=1 for all). Workflow `old-vioc-history` (input max_minutes;
+  resumable).
 - `analysis/review_panel.py` → `data/hist/review_panel_quarterly.csv` (store-quarter panel:
   new reviews scaled to 91 days, usable if 45–183 day gap and count not falling) and
   `data/hist/review_yoy_summary.csv` (same-store YoY overall / income tercile / age bucket;
@@ -56,7 +71,8 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
   within 1/3/5 mi, nearest Take 5, other Valvoline within 3 mi, ZIP income). Exit 1 on missing inputs.
 - `scripts/load_sqlite.py` → `data/db/vvv.sqlite` (local analysis only; rebuilt from CSVs).
 - Workflows: `master-crawl` (manual), `collect` (scheduled), `wayback-reviews` (manual,
-  re-run until "remaining: 0"), `take5-crawl` (manual, one-off), `collect-loop` (scheduled).
+  re-run until "remaining: 0"), `take5-crawl` (manual, one-off), `collect-loop` (scheduled), `income-refresh`,
+  `old-url-probe`, `old-vioc-history` (manual).
 
 ## Rules
 - Collectors run on GitHub Actions (no persistent disk): **append-only daily CSVs** in
