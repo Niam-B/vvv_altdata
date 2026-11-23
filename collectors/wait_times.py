@@ -27,7 +27,8 @@ import time
 from collections import Counter, defaultdict
 
 from collectors.common import (
-    REF, SAMPLE_SEED, append_rows, daily_csv, read_csv, setup_logging, ts_utc, write_csv,
+    REF, SAMPLE_SEED, append_rows, canonical_url, daily_csv, load_stores, read_csv, setup_logging,
+    store_url_key, ts_utc, write_csv,
 )
 from collectors.http import Fetcher
 from collectors.parse import city_has_data, parse_city
@@ -59,6 +60,28 @@ def build_sample(cities: list[dict], counts: Counter, target: int) -> list[dict]
     return sorted(sample, key=lambda c: c["city_url"])
 
 
+def city_rows(parsed: list[dict], known: set, alias: dict, now: str) -> list[dict]:
+    """Output rows for one city page: one per store (duplicate URLs collapsed to the canonical
+    store), plus a 'missing' row for each known store of this city not on the page."""
+    rows, seen, seen_keys = [], set(), set()
+    for r in parsed:
+        url = canonical_url(r["store_url"], alias)
+        if store_url_key(url) in seen_keys:  # same store listed twice (e.g. trailing-period URL)
+            continue
+        seen_keys.add(store_url_key(url))
+        seen.add(url)
+        if r["wait_bucket"]:
+            status = "ok"
+        elif "closed" in r["hours_text"].lower():
+            status = "closed"
+        else:
+            status = "no_wait"
+        rows.append({"ts_utc": now, "store_url": url, "wait_bucket": r["wait_bucket"], "status": status})
+    for s in sorted(known - seen):
+        rows.append({"ts_utc": now, "store_url": s, "wait_bucket": "", "status": "missing"})
+    return rows
+
+
 def main() -> int:
     setup_logging()
     t0 = time.monotonic()
@@ -67,7 +90,8 @@ def main() -> int:
     target = int(os.environ.get("WAIT_SAMPLE_STORES", "600"))
 
     cities = read_csv(REF / "cities.csv")
-    stores = read_csv(REF / "stores.csv") if (REF / "stores.csv").exists() else []
+    # de-duplicated: the same store can be listed under two URLs (see common.dedupe_stores)
+    stores, alias = load_stores() if (REF / "stores.csv").exists() else ([], {})
     city_of = lambda u: u.rsplit("/", 1)[0]  # noqa: E731
     stores_by_city: dict[str, set] = defaultdict(set)
     for s in stores:
@@ -106,19 +130,7 @@ def main() -> int:
                     for s in sorted(stores_by_city.get(cu, ()))] or \
                    [{"ts_utc": now, "store_url": cu, "wait_bucket": "", "status": "fetch_error"}]
         else:
-            seen = set()
-            for r in parse_city(html, cu):
-                seen.add(r["store_url"])
-                if r["wait_bucket"]:
-                    status = "ok"
-                elif "closed" in r["hours_text"].lower():
-                    status = "closed"
-                else:
-                    status = "no_wait"
-                rows.append({"ts_utc": now, "store_url": r["store_url"],
-                             "wait_bucket": r["wait_bucket"], "status": status})
-            for s in sorted(stores_by_city.get(cu, set()) - seen):
-                rows.append({"ts_utc": now, "store_url": s, "wait_bucket": "", "status": "missing"})
+            rows = city_rows(parse_city(html, cu), stores_by_city.get(cu, set()), alias, now)
         status_ct.update(r["status"] for r in rows)
         n_rows += append_rows(out_path, FIELDS, rows)
 

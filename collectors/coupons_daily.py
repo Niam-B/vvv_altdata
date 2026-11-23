@@ -19,7 +19,8 @@ import os
 import time
 
 from collectors.common import (
-    REF, append_rows, daily_csv, read_csv, setup_logging, stratified_sample, ts_utc, write_csv,
+    REF, append_rows, daily_csv, dedupe_urls, load_stores, read_csv, setup_logging,
+    stratified_sample, ts_utc, write_csv,
 )
 from collectors.http import Fetcher
 from collectors.parse import parse_store, store_has_data
@@ -37,13 +38,20 @@ def main() -> int:
     max_min = float(os.environ.get("COUPON_MAX_MINUTES", "13"))
 
     sample_path = REF / "coupon_sample.csv"
+    stores, alias = load_stores()  # de-duplicated (see common.dedupe_stores)
     if sample_path.exists():
         sample = read_csv(sample_path)
     else:
-        stores = [{k: s[k] for k in SAMPLE_FIELDS} for s in read_csv(REF / "stores.csv")]
-        sample = sorted(stratified_sample(stores, "state", n), key=lambda r: r["store_url"])
+        rows = [{k: s[k] for k in SAMPLE_FIELDS} for s in stores]
+        sample = sorted(stratified_sample(rows, "state", n), key=lambda r: r["store_url"])
         write_csv(sample_path, SAMPLE_FIELDS, sample)
         log.info("created fixed %d-store sample -> %s", len(sample), sample_path)
+    # the fixed sample file is never rewritten; duplicate URLs are collapsed at run time and
+    # aliases are fetched under their canonical URL so each store is counted once
+    urls = dedupe_urls((s["store_url"] for s in sample), alias)
+    if len(urls) != len(sample):
+        log.info("sample: %d rows -> %d unique stores after de-duplication", len(sample), len(urls))
+    sample = [{"store_url": u} for u in urls]
 
     f = Fetcher()
     out_path = daily_csv("coupons")

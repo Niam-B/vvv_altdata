@@ -15,6 +15,9 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from collectors.common import dedupe_stores  # noqa: E402
+
 REF = ROOT / "data" / "ref"
 DERIVED = ROOT / "data" / "derived"
 EARTH_MI = 3958.7613
@@ -74,7 +77,14 @@ def main() -> int:
         if not p.exists():
             print(f"ERROR: missing input {p.relative_to(ROOT)}")
             return 1
-    vvv = pd.read_csv(vpath, dtype={"address": str})
+    vvv = pd.read_csv(vpath, dtype=str, keep_default_na=False)
+    n_raw = len(vvv)
+    # the same store can appear under two URLs; count each store once (incl. vvv_within_3mi)
+    vvv = pd.DataFrame(dedupe_stores(vvv.to_dict("records"))[0])
+    for c in ("lat", "lon", "rating", "review_count"):
+        vvv[c] = pd.to_numeric(vvv[c], errors="coerce")
+    if len(vvv) != n_raw:
+        print(f"de-duplicated Valvoline stores: {n_raw} -> {len(vvv)}")
     t5 = pd.read_csv(tpath, dtype={"zip": str, "store_number": str})
     if vvv[["lat", "lon"]].dropna().empty or t5[["lat", "lon"]].dropna().empty:
         print("ERROR: Valvoline or Take 5 stores have no coordinates")

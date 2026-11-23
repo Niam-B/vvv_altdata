@@ -28,6 +28,14 @@ Store-level alternative data on Valvoline Inc. (NYSE: VVV) to test a short thesi
 - `collectors/parse.py` – all HTML parsing (URL-structure / JSON-LD / regex based, written
   without live access — verify against real pages with `SAVE_RAW=1`).
 - `collectors/vioc_master.py` → `data/ref/cities.csv`, `data/ref/stores.csv` (committed).
+- **Duplicate store URLs:** store.vioc.com lists ~270 stores under two URLs differing only by
+  periods in the slug (`.../10115-rosedale-hwy` vs `.../10115-rosedale-hwy.`, `1205-s--w--hwy` vs
+  `1205-s.-w.-hwy`). `collectors.common.dedupe_stores` merges rows sharing place_id, OR lat/lon
+  (4 dp), OR period-free slug, keeping the URL with no trailing period / fewest periods.
+  `stores.csv` is stored de-duplicated; removed URLs are in `data/ref/store_url_aliases.csv`
+  (alias_url → store_url). wait_times, coupons_daily, competition and review_panel map URLs to
+  canonical at run time (fixed sample files are not rewritten). `scripts/dedupe_stores.py`
+  re-applies it in place.
 - `collectors/wait_times.py` → `data/live/wait_times/YYYY-MM-DD.csv` (every 30 min,
   12:00–02:30 UTC). Uses fixed sample `data/ref/wait_sample.csv` if a full pass > 20 min.
 - `collectors/coupons_daily.py` → `data/live/coupons/YYYY-MM-DD.csv` (daily 14:15 UTC,

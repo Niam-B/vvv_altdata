@@ -29,12 +29,16 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from collectors.common import ALIASES_CSV, dedupe_stores  # noqa: E402
+
 HIST = ROOT / "data" / "hist"
 REF = ROOT / "data" / "ref"
 LIVE = ROOT / "data" / "live"
@@ -53,7 +57,7 @@ def fiscal_quarter(q: pd.Period) -> str:
     return f"FY{fy}Q{fq}"
 
 
-def load_observations(hist: Path, live: Path) -> pd.DataFrame:
+def load_observations(hist: Path, live: Path, alias: dict | None = None) -> pd.DataFrame:
     obs = []
     p = hist / "wayback_snapshots.csv"
     if p.exists():
@@ -73,10 +77,24 @@ def load_observations(hist: Path, live: Path) -> pd.DataFrame:
     if not obs:
         return pd.DataFrame(columns=["store_url", "date", "review_count", "source", "quarter"])
     df = pd.concat(obs, ignore_index=True).dropna(subset=["review_count"])
+    if alias:  # same store recorded under two URLs -> one store
+        df["store_url"] = df["store_url"].map(lambda u: alias.get(u, u))
     df["quarter"] = df["date"].dt.to_period("Q")
     # one observation per store-quarter: the latest
     return (df.sort_values(["store_url", "date"]).groupby(["store_url", "quarter"], as_index=False)
               .last())
+
+
+def store_aliases(ref: Path) -> dict:
+    """url -> canonical url, from data/ref/store_url_aliases.csv and any duplicates in stores.csv."""
+    alias = {}
+    if (ref / ALIASES_CSV).exists():
+        a = pd.read_csv(ref / ALIASES_CSV, dtype=str)
+        alias.update(zip(a["alias_url"], a["store_url"]))
+    if (ref / "stores.csv").exists():
+        rows = pd.read_csv(ref / "stores.csv", dtype=str, keep_default_na=False).to_dict("records")
+        alias.update(dedupe_stores(rows)[1])
+    return alias
 
 
 def build_panel(obs: pd.DataFrame) -> pd.DataFrame:
@@ -96,14 +114,18 @@ def build_panel(obs: pd.DataFrame) -> pd.DataFrame:
 
 
 def store_attributes(hist: Path, ref: Path) -> pd.DataFrame:
-    stores = pd.read_csv(ref / "stores.csv", dtype=str) if (ref / "stores.csv").exists() \
+    stores = pd.DataFrame(dedupe_stores(pd.read_csv(ref / "stores.csv", dtype=str, keep_default_na=False)
+                                        .to_dict("records"))[0]) if (ref / "stores.csv").exists() \
         else pd.DataFrame(columns=["store_url", "name", "address", "state"])
     a = stores[["store_url", "name", "address", "state"]].copy()
     a["zip"] = a["address"].fillna("").str.findall(r"\b(\d{5})(?:-\d{4})?\b").str[-1]
     cdx_p = hist / "wayback_cdx.csv"
     if cdx_p.exists():
         cdx = pd.read_csv(cdx_p, dtype=str)
-        cdx = cdx[cdx["cdx_status"] == "ok"].drop_duplicates("store_url", keep="last")
+        cdx = cdx[cdx["cdx_status"] == "ok"].copy()
+        al = store_aliases(ref)
+        cdx["store_url"] = cdx["store_url"].map(lambda u: al.get(u, u))
+        cdx = cdx.sort_values("first_capture").drop_duplicates("store_url", keep="first")
         a = a.merge(cdx[["store_url", "first_capture"]], on="store_url", how="left")
     else:
         a["first_capture"] = np.nan
@@ -157,7 +179,8 @@ def same_store_yoy(panel: pd.DataFrame, group_col: str | None) -> pd.DataFrame:
 
 
 def run(hist: Path = HIST, ref: Path = REF, live: Path = LIVE, quiet: bool = False) -> dict:
-    obs = load_observations(hist, live)
+    alias = store_aliases(ref)
+    obs = load_observations(hist, live, alias)
     if obs.empty:
         print("no review_count observations yet (run the wayback-reviews workflow)")
         return {}

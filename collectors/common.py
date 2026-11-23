@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import logging
 import random
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -98,4 +99,118 @@ def stratified_sample(items: list[dict], key: str, n: int, seed: int = SAMPLE_SE
     for k in sorted(groups):
         g = sorted(groups[k], key=lambda r: tuple(str(v) for v in r.values()))
         out.extend(rng.sample(g, min(quotas[k], len(g))))
+    return out
+
+
+# ---------------------------------------------------------------- store de-duplication
+# store.vioc.com lists some stores under two URLs whose address slugs differ only by periods
+# (".../10115-rosedale-hwy" vs ".../10115-rosedale-hwy.", ".../1205-s--w--hwy" vs
+# ".../1205-s.-w.-hwy"). Rows are the same store if they share a place_id, OR lat/lon rounded
+# to 4 dp (~11 m), OR the URL path with periods removed and repeated hyphens collapsed.
+ALIASES_CSV = "store_url_aliases.csv"  # data/ref/: alias_url -> store_url (canonical)
+ALIAS_FIELDS = ["alias_url", "store_url"]
+
+
+def _url_norm(url: str) -> str:
+    path = url.split("://", 1)[-1].split("/", 1)[-1].lower().rstrip("/")
+    return re.sub(r"-+", "-", path.replace(".", ""))
+
+
+def _slug(url: str) -> str:
+    return url.rstrip("/").rsplit("/", 1)[-1]
+
+
+def _url_rank(url: str) -> tuple:
+    """Lower is preferred: no trailing period, fewest periods, shortest, then alphabetical."""
+    s = _slug(url)
+    return (s.endswith("."), s.count("."), len(url), url)
+
+
+def _latlon_key(row: dict):
+    try:
+        lat, lon = float(row.get("lat") or "nan"), float(row.get("lon") or "nan")
+    except (TypeError, ValueError):
+        return None
+    if lat != lat or lon != lon:  # NaN
+        return None
+    return f"{lat:.4f},{lon:.4f}"
+
+
+def dedupe_stores(rows: list[dict]) -> tuple[list[dict], dict[str, str]]:
+    """Collapse duplicate store rows.
+
+    Returns (kept_rows, alias_map) where alias_map maps EVERY input store_url to its canonical
+    store_url. The kept row is the preferred URL's row, with empty fields filled from its
+    duplicates. Order of first appearance is preserved.
+    """
+    parent = list(range(len(rows)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    first: dict = {}
+    for i, r in enumerate(rows):
+        keys = [("url", _url_norm(r["store_url"]))]
+        if (r.get("place_id") or "").strip():
+            keys.append(("pid", r["place_id"].strip()))
+        if (ll := _latlon_key(r)) is not None:
+            keys.append(("ll", ll))
+        for k in keys:
+            if k in first:
+                parent[find(i)] = find(first[k])
+            else:
+                first[k] = i
+
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i in range(len(rows)):
+        groups[find(i)].append(i)
+
+    alias: dict[str, str] = {}
+    keep_idx: dict[int, dict] = {}
+    for members in groups.values():
+        best = min(members, key=lambda i: _url_rank(rows[i]["store_url"]))
+        row = dict(rows[best])
+        for i in sorted(members, key=lambda i: _url_rank(rows[i]["store_url"])):
+            for k, v in rows[i].items():
+                if row.get(k) in (None, "") and v not in (None, ""):
+                    row[k] = v
+        for i in members:
+            alias[rows[i]["store_url"]] = row["store_url"]
+        keep_idx[min(members)] = row
+    return [keep_idx[i] for i in sorted(keep_idx)], alias
+
+
+def load_aliases() -> dict[str, str]:
+    p = REF / ALIASES_CSV
+    return {r["alias_url"]: r["store_url"] for r in read_csv(p)} if p.exists() else {}
+
+
+def load_stores() -> tuple[list[dict], dict[str, str]]:
+    """De-duplicated data/ref/stores.csv plus a url -> canonical url map (incl. saved aliases)."""
+    rows, alias = dedupe_stores(read_csv(REF / "stores.csv"))
+    saved = load_aliases()
+    return rows, {**saved, **alias}
+
+
+def canonical_url(url: str, alias: dict[str, str]) -> str:
+    return alias.get(url, url)
+
+
+def store_url_key(url: str) -> str:
+    """Period/hyphen-insensitive key for a store URL (two URLs with the same key = same store)."""
+    return _url_norm(url)
+
+
+def dedupe_urls(urls: Iterable[str], alias: dict[str, str]) -> list[str]:
+    """Map URLs to canonical and drop duplicates, preserving first-seen order."""
+    out, seen = [], set()
+    for u in urls:
+        c = canonical_url(u, alias)
+        k = store_url_key(c)
+        if k not in seen:
+            seen.add(k)
+            out.append(c)
     return out

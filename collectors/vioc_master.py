@@ -21,7 +21,10 @@ import os
 import time
 from collections import Counter
 
-from collectors.common import BASE, REF, setup_logging, stratified_sample, ts_utc, write_csv
+from collectors.common import (
+    ALIAS_FIELDS, ALIASES_CSV, BASE, REF, dedupe_stores, load_aliases, setup_logging, stratified_sample,
+    ts_utc, write_csv,
+)
 from collectors.http import Fetcher
 from collectors.parse import (
     city_has_data,
@@ -137,6 +140,12 @@ def main() -> int:
         })
         if i % 100 == 0:
             log.info("store pages %d/%d", i, len(listing))
+    n_raw = len(stores)
+    stores, alias = dedupe_stores(stores)  # same store under two URLs (e.g. trailing period)
+    aliases = {**load_aliases(), **{a: c for a, c in alias.items() if a != c}}
+    write_csv(REF / ALIASES_CSV, ALIAS_FIELDS,
+              [{"alias_url": a, "store_url": c} for a, c in sorted(aliases.items())])
+    log.info("de-duplicated stores: %d -> %d", n_raw, len(stores))
     write_csv(REF / "stores.csv", STORE_FIELDS, stores)
     ensure_samples(list(cities.values()), stores)
 
