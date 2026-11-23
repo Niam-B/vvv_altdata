@@ -2,6 +2,7 @@
 
 Inputs
   data/hist/wayback_snapshots.csv   archived review_count, one snapshot per store-quarter
+  data/hist/old_url_snapshots.csv   same, from the store's pre-late-2025 URL (collectors/old_vioc_history.py)
   data/hist/wayback_cdx.csv         first Wayback capture per store (store-age proxy)
   data/live/coupons/*.csv           live daily review_count for the same sample stores
   data/ref/stores.csv               name / address (ZIP) / state
@@ -60,14 +61,16 @@ def fiscal_quarter(q: pd.Period) -> str:
 
 def load_observations(hist: Path, live: Path, alias: dict | None = None) -> pd.DataFrame:
     obs = []
-    p = hist / "wayback_snapshots.csv"
-    if p.exists():
-        w = pd.read_csv(p, dtype=str)
-        w = w[w["status"] == "ok"].copy()
-        w["review_count"] = pd.to_numeric(w["review_count"], errors="coerce")
-        w["date"] = pd.to_datetime(w["snapshot_date"])
-        w["source"] = "wayback"
-        obs.append(w[["store_url", "date", "review_count", "source"]])
+    # wayback_snapshots: current store.vioc.com URLs; old_url_snapshots: pre-late-2025 URLs
+    for name, src in (("wayback_snapshots.csv", "wayback"), ("old_url_snapshots.csv", "wayback_old_url")):
+        p = hist / name
+        if p.exists():
+            w = pd.read_csv(p, dtype=str)
+            w = w[w["status"] == "ok"].copy()
+            w["review_count"] = pd.to_numeric(w["review_count"], errors="coerce")
+            w["date"] = pd.to_datetime(w["snapshot_date"])
+            w["source"] = src
+            obs.append(w[["store_url", "date", "review_count", "source"]])
     files = sorted((live / "coupons").glob("*.csv"))
     if files:
         lv = pd.concat([pd.read_csv(f, dtype=str) for f in files], ignore_index=True)
