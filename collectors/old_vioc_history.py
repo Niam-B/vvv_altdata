@@ -170,8 +170,8 @@ def phase_resolve(f: Fetcher, caps: list[dict], stores: list[dict], budget: Budg
                     break
         # b. fetch the latest archived page and match on its contents
         if not rec["status"]:
-            if budget.out():
-                break
+            if budget.out():  # keep going: later codes may still match from their URL alone
+                continue
             src = b or a
             html = f.get(f"https://web.archive.org/web/{src['timestamp']}id_/{src['original']}")
             if html is None:
